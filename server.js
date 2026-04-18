@@ -15,7 +15,6 @@ const PORT = process.env.PORT || 3000;
 const DB_FILE = path.join(__dirname, "database.json");
 
 
-
 // ─── Multer (Image Upload) ─────────────────────────────
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -51,17 +50,21 @@ const upload = multer({
 });
 
 
-
 // ─── Middleware ────────────────────────────────────────
 app.use(express.json());
 
 app.use(express.static(path.join(__dirname, "public")));
 
+app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
 
 
 // ─── Database Helpers ──────────────────────────────────
 function readDB() {
-  return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+  try {
+    return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+  } catch {
+    return { products: [], cart: [], nextProductId: 1, nextCartId: 1 };
+  }
 }
 
 function saveDB(data) {
@@ -69,16 +72,13 @@ function saveDB(data) {
 }
 
 
-
 // ─── PRODUCTS ──────────────────────────────────────────
 
 // GET
 app.get("/api/products", (req, res) => {
   const db = readDB();
-
   res.json(db.products);
 });
-
 
 
 // POST (ADMIN)
@@ -89,8 +89,8 @@ app.post("/api/products", upload.single("image"), (req, res) => {
 
   const { name, price, stock } = req.body;
 
-  if (!name || !price) {
-    return res.status(400).json({ error: "Eksik veri" });
+  if (!name || isNaN(price)) {
+    return res.status(400).json({ error: "Eksik veya hatalı veri" });
   }
 
   const db = readDB();
@@ -111,14 +111,17 @@ app.post("/api/products", upload.single("image"), (req, res) => {
 });
 
 
-
 // DELETE (ADMIN)
 app.delete("/api/products/:id", (req, res) => {
   if (req.headers.admin !== ADMIN_KEY) {
     return res.status(403).json({ error: "Admin only" });
   }
 
-  const id = parseInt(req.params.id);
+  const id = Number(req.params.id);
+
+  if (isNaN(id)) {
+    return res.status(400).json({ error: "Geçersiz ID" });
+  }
 
   const db = readDB();
 
@@ -131,7 +134,11 @@ app.delete("/api/products/:id", (req, res) => {
   const product = db.products[index];
 
   if (product.image && product.image.startsWith("/uploads/")) {
-    const imgPath = path.join(__dirname, "public", product.image);
+    const imgPath = path.join(
+      __dirname,
+      "public",
+      product.image.replace("/uploads/", "uploads/")
+    );
 
     if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
   }
@@ -146,14 +153,17 @@ app.delete("/api/products/:id", (req, res) => {
 });
 
 
-
 // PUT (ADMIN)
 app.put("/api/products/:id", (req, res) => {
   if (req.headers.admin !== ADMIN_KEY) {
     return res.status(403).json({ error: "Admin only" });
   }
 
-  const id = parseInt(req.params.id);
+  const id = Number(req.params.id);
+
+  if (isNaN(id)) {
+    return res.status(400).json({ error: "Geçersiz ID" });
+  }
 
   const db = readDB();
 
@@ -161,6 +171,10 @@ app.put("/api/products/:id", (req, res) => {
 
   if (!product) {
     return res.status(404).json({ error: "Bulunamadı" });
+  }
+
+  if (req.body.price && isNaN(req.body.price)) {
+    return res.status(400).json({ error: "Fiyat hatalı" });
   }
 
   product.name = req.body.name || product.name;
@@ -174,7 +188,6 @@ app.put("/api/products/:id", (req, res) => {
 
   res.json(product);
 });
-
 
 
 // ─── CART ──────────────────────────────────────────────
@@ -191,7 +204,6 @@ app.get("/api/cart", (req, res) => {
 
   res.json(result);
 });
-
 
 
 // POST
@@ -230,10 +242,13 @@ app.post("/api/cart", (req, res) => {
 });
 
 
-
 // DELETE
 app.delete("/api/cart/:id", (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = Number(req.params.id);
+
+  if (isNaN(id)) {
+    return res.status(400).json({ error: "Geçersiz ID" });
+  }
 
   const db = readDB();
 
@@ -258,6 +273,14 @@ app.delete("/api/cart/:id", (req, res) => {
   res.json({ message: "Silindi" });
 });
 
+
+// ─── Multer Error Handling ─────────────────────────────
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError || err.message.includes("resim")) {
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
+});
 
 
 // ─── START ─────────────────────────────────────────────
